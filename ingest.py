@@ -1,6 +1,6 @@
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_community.vectorstores import FAISS
 
 def ingest_document(pdf_path: str, vector_db_path: str):
@@ -15,15 +15,13 @@ def ingest_document(pdf_path: str, vector_db_path: str):
     )
     chunks = text_splitter.split_documents(documents)
 
-    print("Loading embedding model...")
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    print("Loading lightweight FastEmbed model (ONNX Runtime, <100MB RAM)...")
+    embeddings = FastEmbedEmbeddings()
 
     print("Creating vector database...")
     vector_db = FAISS.from_documents(chunks, embeddings)
     vector_db.save_local(vector_db_path)
-    print("Done! Database saved.")
+    print("Done! Database re-saved with FastEmbed.")
 
 if __name__ == "__main__":
     ingest_document("sample_paper.pdf", "faiss_index")
