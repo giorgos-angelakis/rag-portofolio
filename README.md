@@ -10,6 +10,18 @@ This service allows users to ingest PDF documents, convert text into vector embe
 [![Groq](https://img.shields.io/badge/LLM-Groq%20Llama%203.3%2070B-orange.svg)](https://groq.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
 
+🚀 **[Click Here to Test the Live Interactive API Demo](https://your-app-name.onrender.com/docs)**
+
+---
+
+## 🌐 Live Interactive Demo
+
+Try the API directly in your browser without cloning or installing anything:
+
+👉 **[https://rag-ai-document-chat.onrender.com/docs](https://rag-ai-document-chat.onrender.com/docs)**
+
+> *Note: Hosted on Render's free tier. If the service has been idle, the initial request may take ~30 seconds to wake up the server.*
+
 ---
 
 ## 🌟 Key Features
@@ -152,9 +164,3 @@ This repository includes a `Dockerfile` optimized for low-memory container envir
 3. Set the instance type to **Free**.
 4. Add `GROQ_API_KEY` under **Environment Variables**.
 5. Deploy!
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
