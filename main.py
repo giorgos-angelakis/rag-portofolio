@@ -15,7 +15,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
-app = FastAPI(title="AI Document Chat API", version="2.0")
+app = FastAPI(title="AI Document Chat API", version="2.2")
 
 # Global variables for state
 embeddings = FastEmbedEmbeddings()
@@ -37,20 +37,6 @@ Context:
 Question: {question}"""
 
 prompt = ChatPromptTemplate.from_template(prompt_template)
-
-# Load local faiss_index if present as default fallback
-if os.path.exists("faiss_index"):
-    try:
-        vector_db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
-        retriever = vector_db.as_retriever(search_kwargs={"k": 3})
-        rag_chain = (
-            {"context": retriever | format_docs, "question": RunnablePassthrough()}
-            | prompt
-            | llm
-            | StrOutputParser()
-        )
-    except Exception as e:
-        print(f"Warning: Could not load default index: {e}")
 
 class QueryRequest(BaseModel):
     question: str
@@ -101,10 +87,11 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @app.post("/ask")
 async def ask_question(request: QueryRequest):
+    # If no PDF has been uploaded via /upload, block the query
     if rag_chain is None:
         raise HTTPException(
             status_code=400, 
-            detail="No document has been ingested yet. Please upload a PDF first."
+            detail="⚠️ No document has been uploaded yet. Please upload a PDF in the sidebar first!"
         )
     try:
         answer = rag_chain.invoke(request.question)

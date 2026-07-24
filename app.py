@@ -12,7 +12,7 @@ st.sidebar.header("Backend Configuration")
 # Input box for your backend URL (defaults to localhost for testing)
 api_url = st.sidebar.text_input(
     "FastAPI Backend URL", 
-    value="http://127.0.0.1:8000"
+    value="https://rag-ai-document-chat.onrender.com"
 )
 
 st.sidebar.markdown("---")
@@ -44,9 +44,10 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
+
 # User Chat Input
 if prompt := st.chat_input("Ask a question about the document..."):
-    # Render user query immediately
+    # Add user query to UI
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
 
@@ -58,10 +59,14 @@ if prompt := st.chat_input("Ask a question about the document..."):
             
             if response.status_code == 200:
                 answer = response.json().get("answer", "No response content.")
+            elif response.status_code == 400:
+                # Capture the 400 error message directly from FastAPI
+                error_detail = response.json().get("detail", "Please upload a PDF first.")
+                answer = f"⚠️ **Cannot process request:** {error_detail}"
             else:
-                answer = f"⚠️ Backend Error ({response.status_code}): {response.json().get('detail', 'Unknown error')}"
+                answer = f"⚠️ **Backend Error ({response.status_code}):** {response.json().get('detail', 'Unknown error')}"
         except Exception as e:
-            answer = f"❌ Connection Error: Ensure your FastAPI server is running at `{api_url}`."
+            answer = f"❌ **Connection Error:** Could not reach the server at `{api_url}`."
 
     # Render assistant output
     st.session_state.messages.append({"role": "assistant", "content": answer})
