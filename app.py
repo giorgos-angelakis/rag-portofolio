@@ -26,20 +26,22 @@ if st.sidebar.button("Process PDF", type="primary"):
                 files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
                 response = requests.post(f"{api_url}/upload", files=files)
                 
-                # Check if the server returned JSON or an HTML error page
+                # SAFEGUARD 3: Safely attempt to parse JSON, fall back to human error if HTML returns
                 try:
                     res_data = response.json()
                 except Exception:
-                    res_data = None
+                    res_data = {
+                        "detail": f"Server non-JSON response (HTTP {response.status_code}). The backend server timed out or ran out of RAM."
+                    }
 
-                if response.status_code == 200 and res_data:
+                if response.status_code == 200:
                     st.sidebar.success(res_data.get("message", "Ingestion successful!"))
-                elif res_data and "detail" in res_data:
-                    st.sidebar.error(f"⚠️ {res_data['detail']}")
                 else:
-                    st.sidebar.error(f"❌ Server Error ({response.status_code}): The server ran out of memory or crashed.")
+                    error_msg = res_data.get("detail", "An unknown error occurred.")
+                    st.sidebar.error(f"⚠️ {error_msg}")
+
             except Exception as e:
-                st.sidebar.error(f"Failed to connect to backend: {e}")
+                st.sidebar.error(f"❌ Connection Error: Could not connect to backend (`{e}`)")
     else:
         st.sidebar.warning("Please select a PDF file first.")
 
