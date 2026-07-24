@@ -23,14 +23,21 @@ if st.sidebar.button("Process PDF", type="primary"):
     if uploaded_file is not None:
         with st.spinner("Ingesting and embedding document..."):
             try:
-                # Package PDF binary stream to send over HTTP multipart/form-data
                 files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
                 response = requests.post(f"{api_url}/upload", files=files)
                 
-                if response.status_code == 200:
-                    st.sidebar.success(response.json().get("message", "Ingestion successful!"))
+                # Check if the server returned JSON or an HTML error page
+                try:
+                    res_data = response.json()
+                except Exception:
+                    res_data = None
+
+                if response.status_code == 200 and res_data:
+                    st.sidebar.success(res_data.get("message", "Ingestion successful!"))
+                elif res_data and "detail" in res_data:
+                    st.sidebar.error(f"⚠️ {res_data['detail']}")
                 else:
-                    st.sidebar.error(f"Error {response.status_code}: {response.json().get('detail')}")
+                    st.sidebar.error(f"❌ Server Error ({response.status_code}): The server ran out of memory or crashed.")
             except Exception as e:
                 st.sidebar.error(f"Failed to connect to backend: {e}")
     else:

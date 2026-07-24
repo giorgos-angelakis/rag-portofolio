@@ -1,4 +1,5 @@
 import os
+import gc
 import tempfile
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -44,7 +45,6 @@ class QueryRequest(BaseModel):
 @app.get("/")
 def home():
     return {"status": "online", "message": "RAG API is live!"}
-
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     global vector_db, retriever, rag_chain
@@ -53,24 +53,31 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
     try:
-        # Save incoming file to a temporary file on disk
+        # Save temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
             content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
 
-        # Load and chunk the uploaded PDF
+        # Load document
         loader = PyPDFLoader(tmp_path)
         documents = loader.load()
         
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        # 1. PAGE GUARD: Block PDFs over 15 pages to stay under 512MB RAM
+        if len(documents) > 15:
+            os.remove(tmp_path)
+            raise HTTPException(
+                status_code=400, 
+                detail=f"PDF is too large ({len(documents)} pages). Free tier allows a max of 15 pages."
+            )
+
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         chunks = text_splitter.split_documents(documents)
 
-        # Re-index chunks using FastEmbed and FAISS
+        # Re-index
         vector_db = FAISS.from_documents(chunks, embeddings)
         retriever = vector_db.as_retriever(search_kwargs={"k": 3})
 
-        # Rebuild LCEL RAG Chain
         rag_chain = (
             {"context": retriever | format_docs, "question": RunnablePassthrough()}
             | prompt
@@ -78,11 +85,16 @@ async def upload_pdf(file: UploadFile = File(...)):
             | StrOutputParser()
         )
 
-        # Delete temp file
+        # Cleanup temp file and force RAM release
         os.remove(tmp_path)
+        gc.collect()  # <--- Free unused memory back to OS immediately
 
-        return {"status": "success", "message": f"Successfully ingested '{file.filename}'!"}
+        return {"status": "success", "message": f"Successfully ingested '{file.filename}' ({len(documents)} pages)!"}
+
+    except HTTPException as he:
+        raise he
     except Exception as e:
+        gc.collect()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/ask")
