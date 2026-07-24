@@ -18,7 +18,7 @@ api_url = st.sidebar.text_input(
 st.sidebar.markdown("---")
 st.sidebar.header("Document Ingestion")
 uploaded_file = st.sidebar.file_uploader("Upload a PDF file", type=["pdf"])
-
+st.sidebar.caption("⚠️ **Limit:** 10 pages max (512MB RAM free tier)")
 if st.sidebar.button("Process PDF", type="primary"):
     if uploaded_file is not None:
         with st.spinner("Ingesting and embedding document..."):

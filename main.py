@@ -1,11 +1,12 @@
 import os
 
-# Lock ONNX single-threading
+# Lock ONNX and multi-threading to 1 thread BEFORE importing ML models
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 
 import gc
 import tempfile
@@ -28,13 +29,12 @@ load_dotenv()
 
 app = FastAPI(title="AI Document Chat API", version="2.0")
 
-# SAFEGUARD 1: Global Catch-All Handler for any unhandled Python exception
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     gc.collect()
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Server Safeguard: An unexpected error occurred: {str(exc)}"}
+        content={"detail": f"Server Safeguard: {str(exc)}"}
     )
 
 embeddings = FastEmbedEmbeddings(threads=1)
@@ -73,22 +73,25 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
     try:
-        # Save temp file
+        # Save temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
             content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
 
+        # 1. Read metadata header
         reader = PdfReader(tmp_path)
         num_pages = len(reader.pages)
         
-        if num_pages > 15:
+        # Set max page limit to 10 for free tier stability
+        if num_pages > 10:
             os.remove(tmp_path)
             raise HTTPException(
                 status_code=400, 
-                detail=f"Document has {num_pages} pages. Free tier supports a max of 15 pages."
+                detail=f"Document has {num_pages} pages. The free tier supports a maximum of 10 pages."
             )
 
+        # 2. Extract plain text
         documents = []
         for i, page in enumerate(reader.pages):
             text = page.extract_text() or ""
@@ -100,14 +103,28 @@ async def upload_pdf(file: UploadFile = File(...)):
         if not documents:
             raise HTTPException(status_code=400, detail="Could not extract readable text from PDF.")
 
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        # 3. Smaller chunks (500 chars) = lower memory per matrix calculation
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
         chunks = text_splitter.split_documents(documents)
 
         del documents
         gc.collect()
 
-        # Build FAISS index
-        vector_db = FAISS.from_documents(chunks, embeddings)
+        # 4. MICRO-BATCH INGESTION (Prevents RAM Spikes):
+        # Instead of embedding all chunks at once, process 2 chunks at a time
+        vector_db = None
+        batch_size = 2
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i : i + batch_size]
+            if vector_db is None:
+                vector_db = FAISS.from_documents(batch, embeddings)
+            else:
+                vector_db.add_documents(batch)
+            gc.collect()  # Force memory release back to OS after every 2 chunks
+
+        del chunks
+        gc.collect()
+
         retriever = vector_db.as_retriever(search_kwargs={"k": 3})
 
         rag_chain = (
@@ -117,17 +134,8 @@ async def upload_pdf(file: UploadFile = File(...)):
             | StrOutputParser()
         )
 
-        gc.collect()
-
         return {"status": "success", "message": f"Successfully ingested '{file.filename}' ({num_pages} pages)!"}
 
-    # SAFEGUARD 2: Explicitly catch Python Memory Errors
-    except MemoryError:
-        gc.collect()
-        raise HTTPException(
-            status_code=400, 
-            detail="Memory Limit Reached: This document requires too much memory to process on the free tier."
-        )
     except HTTPException as he:
         raise he
     except Exception as e:
