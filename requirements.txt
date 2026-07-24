@@ -8,3 +8,6 @@ pypdf
 faiss-cpu
 fastembed
 python-dotenv
+python-multipart
+streamlit
+requests
