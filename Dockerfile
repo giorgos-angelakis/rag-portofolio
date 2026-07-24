@@ -8,18 +8,17 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Install compiler tools required by C extensions like FAISS
+# Install compiler tools required by C extensions
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install dependencies first (caches Docker layers for faster rebuilds)
+# Copy and install dependencies first (caches layers for fast rebuilds)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your application code and the pre-built FAISS index
+# Copy application code
 COPY main.py .
-COPY faiss_index/ ./faiss_index/
 
 # Expose FastAPI port
 EXPOSE 8000
