@@ -38,7 +38,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 embeddings = FastEmbedEmbeddings(threads=1)
-llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.2)
+llm = ChatGroq(model_name="openai/gpt-oss-120b", temperature=0.2)
 
 vector_db = None
 retriever = None
