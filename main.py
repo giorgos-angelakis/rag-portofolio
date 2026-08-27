@@ -1,6 +1,6 @@
 import os
 
-# Lock ONNX and multi-threading to 1 thread BEFORE importing ML models
+# Lock threading before importing ML libraries
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -10,6 +10,7 @@ os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 
 import gc
 import tempfile
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -27,19 +28,19 @@ from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
-app = FastAPI(title="AI Document Chat API", version="2.0")
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    gc.collect()
-    return JSONResponse(
-        status_code=500,
-        content={"detail": f"Server Safeguard: {str(exc)}"}
-    )
-
-# Optimized FastEmbed instance with batch size matching vector store insertion
-embeddings = FastEmbedEmbeddings(threads=1, batch_size=32)
+# Initialize global model objects
+embeddings = FastEmbedEmbeddings(threads=1, batch_size=16)
 llm = ChatGroq(model_name="openai/gpt-oss-120b", temperature=0.2)
+
+# Lifespan manager: Warm up the ONNX model at boot time to prevent in-request RAM spikes
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Pre-load ONNX weights into RAM before receiving user requests
+    embeddings.embed_query("warmup query")
+    gc.collect()
+    yield
+
+app = FastAPI(title="AI Document Chat API", version="2.0", lifespan=lifespan)
 
 vector_db = None
 retriever = None
@@ -74,49 +75,48 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
     try:
-        # Save temporary file
+        # Write PDF to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
             content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
 
-        # 1. Read metadata header
+        # Parse PDF metadata and pages
         reader = PdfReader(tmp_path)
         num_pages = len(reader.pages)
 
-        # Scaled limit to 100 pages for expanded capacity
         MAX_PAGES = 100
         if num_pages > MAX_PAGES:
             os.remove(tmp_path)
             raise HTTPException(
                 status_code=400, 
-                detail=f"Document has {num_pages} pages. The backend limit is currently set to {MAX_PAGES} pages."
+                detail=f"Document has {num_pages} pages. The backend limit is set to {MAX_PAGES} pages."
             )
 
-        # 2. Extract plain text
         documents = []
         for i, page in enumerate(reader.pages):
             text = page.extract_text() or ""
             if text.strip():
                 documents.append(Document(page_content=text, metadata={"page": i + 1}))
 
+        # Delete temp file and reader object immediately to free memory
+        del reader
         os.remove(tmp_path)
+        gc.collect()
 
         if not documents:
             raise HTTPException(status_code=400, detail="Could not extract readable text from PDF.")
 
-        # 3. Optimized chunk size to balance vector count and retrieval quality
+        # Text chunking
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
         chunks = text_splitter.split_documents(documents)
 
         del documents
         gc.collect()
 
-        # 4. OPTIMIZED BATCH INGESTION:
-        # Increased batch size from 2 to 32. ONNX vectorizes 32 chunks simultaneously 
-        # much faster without increasing peak memory consumption.
+        # Batch ingestion with smaller micro-batches (16 chunks) to keep RAM bounded on 512MB free tier
         vector_db = None
-        batch_size = 32
+        batch_size = 16
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
             if vector_db is None:
