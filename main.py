@@ -37,7 +37,8 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": f"Server Safeguard: {str(exc)}"}
     )
 
-embeddings = FastEmbedEmbeddings(threads=1)
+# Optimized FastEmbed instance with batch size matching vector store insertion
+embeddings = FastEmbedEmbeddings(threads=1, batch_size=32)
 llm = ChatGroq(model_name="openai/gpt-oss-120b", temperature=0.2)
 
 vector_db = None
@@ -68,7 +69,7 @@ def home():
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     global vector_db, retriever, rag_chain
-    
+
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
@@ -82,13 +83,14 @@ async def upload_pdf(file: UploadFile = File(...)):
         # 1. Read metadata header
         reader = PdfReader(tmp_path)
         num_pages = len(reader.pages)
-        
-        # Set max page limit to 10 for free tier stability
-        if num_pages > 10:
+
+        # Scaled limit to 100 pages for expanded capacity
+        MAX_PAGES = 100
+        if num_pages > MAX_PAGES:
             os.remove(tmp_path)
             raise HTTPException(
                 status_code=400, 
-                detail=f"Document has {num_pages} pages. The free tier supports a maximum of 10 pages."
+                detail=f"Document has {num_pages} pages. The backend limit is currently set to {MAX_PAGES} pages."
             )
 
         # 2. Extract plain text
@@ -103,24 +105,25 @@ async def upload_pdf(file: UploadFile = File(...)):
         if not documents:
             raise HTTPException(status_code=400, detail="Could not extract readable text from PDF.")
 
-        # 3. Smaller chunks (500 chars) = lower memory per matrix calculation
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        # 3. Optimized chunk size to balance vector count and retrieval quality
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
         chunks = text_splitter.split_documents(documents)
 
         del documents
         gc.collect()
 
-        # 4. MICRO-BATCH INGESTION (Prevents RAM Spikes):
-        # Instead of embedding all chunks at once, process 2 chunks at a time
+        # 4. OPTIMIZED BATCH INGESTION:
+        # Increased batch size from 2 to 32. ONNX vectorizes 32 chunks simultaneously 
+        # much faster without increasing peak memory consumption.
         vector_db = None
-        batch_size = 2
+        batch_size = 32
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
             if vector_db is None:
                 vector_db = FAISS.from_documents(batch, embeddings)
             else:
                 vector_db.add_documents(batch)
-            gc.collect()  # Force memory release back to OS after every 2 chunks
+            gc.collect()
 
         del chunks
         gc.collect()
